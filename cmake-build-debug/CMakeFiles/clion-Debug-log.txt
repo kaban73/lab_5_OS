@@ -1,0 +1,13 @@
+cmake -DCMAKE_BUILD_TYPE=Debug -DCMAKE_MAKE_PROGRAM=/opt/clion/bin/ninja/linux/x64/ninja -G Ninja -S /home/ivankabanov/CLionProjects/lab_5_OS -B /home/ivankabanov/CLionProjects/lab_5_OS/cmake-build-debug
+-- Configuring done (0.0s)
+CMake Error at CMakeLists.txt:6 (add_executable):
+  Cannot find source file:
+
+    main.cpp
+
+
+CMake Error at CMakeLists.txt:6 (add_executable):
+  No SOURCES given to target: lab_5_OS
+
+
+CMake Generate step failed.  Build files cannot be regenerated correctly.
