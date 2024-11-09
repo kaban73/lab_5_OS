@@ -6,7 +6,7 @@ libsimplefs.a: simplefs.c
 	ranlib libsimplefs.a
 
 app: main.c
-	gcc -Wall -o app app.c  -L. -lsimplefs
+	gcc -Wall -o app main.c  -L. -lsimplefs
 
 clean:
 	rm -fr *.o *.a *~ a.out app  vdisk1.bin

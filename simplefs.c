@@ -6,6 +6,28 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include "simplefs.h"
+#include <string.h>
+
+#define SUPERBLOCK_SIZE sizeof(SuperBlock)
+#define FAT_SIZE 1024
+#define DIR_ENTRY_SIZE 128
+#define NUM_DIR_ENTRIES 56
+
+// Структуры данных
+typedef struct {
+    int total_blocks;    // общее количество блоков
+    int free_blocks;     // количество свободных блоков
+    int fat_blocks;      // количество блоков для FAT
+    int root_dir_blocks; // количество блоков для корневого каталога
+} SuperBlock;
+
+// Запись в корневом каталоге
+typedef struct {
+    char filename[32];   // имя файла (с учетом завершающего нуля)
+    int size;            // размер файла в байтах
+    int first_block;     // номер первого блока данных
+} DirectoryEntry;
+
 
 int vdisk_fd; // global virtual disk file descriptor
               // will be assigned with the sfs_mount call
@@ -75,9 +97,42 @@ int write_block (void *block, int k)
    The following functions are to be called by applications directly.
 ***********************************************************************/
 
-int sfs_format (char *vdiskname)
-{
-    return (0);
+// В функции sfs_format
+int sfs_format(char *vdiskname) {
+    // Определим глобальные параметры файловой системы
+    SuperBlock superblock;
+    DirectoryEntry dir_entries[NUM_DIR_ENTRIES] = {0}; // все нули
+    char fat[FAT_SIZE * BLOCKSIZE] = {0}; // все нули, для FAT
+    int i;
+
+    // Заполнить суперблок информацией
+    superblock.total_blocks = (1 + 7 + 1024 + (128 * 1024)) / BLOCKSIZE; // расчет общего количества блоков
+    superblock.free_blocks = superblock.total_blocks; // все блоки свободны в начале
+    superblock.fat_blocks = 1024; // фиксированное количество блоков для FAT
+    superblock.root_dir_blocks = 7; // фиксированное количество блоков для корневого каталога
+
+    // Записать суперблок на диск
+    if (write_block(&superblock, 0) == -1) {
+        return -1; // Ошибка записи
+    }
+
+    int dir_block_index = 0; // Индекс для записи в корневой каталог
+    // Записать корневой каталог (7 блоков)
+    for (i = 0; i < superblock.root_dir_blocks; ++i) {
+        if (write_block(&dir_entries[dir_block_index], i + 1) == -1) {
+            return -1; // Ошибка записи
+        }
+        dir_block_index += BLOCKSIZE / DIR_ENTRY_SIZE; // Перемещение к следующему блоку
+    }
+
+    // Записать FAT (1024 блока)
+    for (i = 0; i < FAT_SIZE; ++i) {
+        if (write_block(fat, i + superblock.root_dir_blocks + 1) == -1) {
+            return -1; // Ошибка записи
+        }
+    }
+
+    return 0; // Успешное форматирование
 }
 
 int sfs_mount (char *vdiskname)
