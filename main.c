@@ -37,6 +37,7 @@ int main()
         printf ("could not mount \n");
         exit (1);
     }
+    printf ("started\n");
 
     printf ("creating files\n");
     sfs_create ("file1.bin");
