@@ -12,8 +12,7 @@ int main()
     int fd1, fd2, fd;
     int i;
     char buffer[1024];
-    //char buffer2[8] = {50, 50, 50, 50, 50, 50, 50, 50}; // 2
-    char buffer2[8] = {65, 66, 67, 68, 69, 70, 71, 72}; // abcd...
+    char buffer2[8] = {50, 50, 50, 50, 50, 50, 50, 50}; // 2
     int size;
     char c;
 
@@ -84,9 +83,10 @@ int main()
     fd = sfs_open("file3.bin", MODE_READ);
     printf ("sfs_open fd: %d\n", fd);
     size = sfs_getsize (fd);
+    printf ("sfs_getsize size: %d\n", size);
     for (i = 0; i < size; ++i) {
         ret = sfs_read (fd, (void *) buffer, 1);
-        printf ("sfs_read file3: %d\n", ret);
+        //printf ("sfs_read file3: %d\n", ret);
         c = (char) buffer[0];
         printf ("char in file3: %c\n", c);
     }

@@ -55,8 +55,8 @@ void init_open_files() {
 }
 
 int vdisk_fd; // global virtual disk file descriptor
-              // will be assigned with the sfs_mount call
-              // any function in this file can use this.
+// will be assigned with the sfs_mount call
+// any function in this file can use this.
 
 
 // This function is simply used to a create a virtual disk
@@ -360,7 +360,7 @@ int sfs_read(int fd, void *buf, int n) {
                     return -1; // Ошибка чтения блока
                 }
                 int bytes_in_block = (b == (bytes_to_read + BLOCKSIZE - 1) / BLOCKSIZE - 1)
-                        ? bytes_to_read % BLOCKSIZE : BLOCKSIZE;
+                                     ? bytes_to_read % BLOCKSIZE : BLOCKSIZE;
 
                 // Копируем данные в буфер
                 memcpy(buf + total_read, block, bytes_in_block);
@@ -504,5 +504,3 @@ int sfs_delete(char *filename) {
 
     return -1; // Ошибка: файл не найден в каталоге
 }
-
-
