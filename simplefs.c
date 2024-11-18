@@ -35,6 +35,25 @@ typedef struct {
 static DirectoryEntry directory_entries[NUM_DIR_ENTRIES]; // Записи каталога
 static int files_count = 0; // Общее количество файлов в файловой системе
 
+#define MAX_OPEN_FILES 10 // Максимальное количество открытых файлов
+
+typedef struct {
+    int fd; // Дескриптор файла
+    char filename[32]; // Имя файла
+    int mode; // Режим (чтение или добавление)
+    int current_size; // Текущий размер файла в байтах
+} OpenFileEntry;
+
+// Таблица открытых файлов
+static OpenFileEntry open_files[MAX_OPEN_FILES];
+
+// Инициализируем таблицу открытых файлов
+void init_open_files() {
+    for (int i = 0; i < MAX_OPEN_FILES; i++) {
+        open_files[i].fd = -1; // -1 означает, что запись свободна
+    }
+}
+
 int vdisk_fd; // global virtual disk file descriptor
               // will be assigned with the sfs_mount call
               // any function in this file can use this.
@@ -86,19 +105,18 @@ int create_vdisk(char *vdiskname, int m) {
 // size of the block is BLOCKSIZE.
 // space for block must be allocated outside of this function.
 // block numbers start from 0 in the virtual disk.
-int read_block (void *block, int k)
-{
+int read_block(void *block, int k) {
     int n;
     int offset;
 
-    offset = k * BLOCKSIZE;
-    lseek(vdisk_fd, (off_t) offset, SEEK_SET);
-    n = read (vdisk_fd, block, BLOCKSIZE);
+    offset = k * BLOCKSIZE; // Вычисляем смещение для блока k
+    lseek(vdisk_fd, (off_t) offset, SEEK_SET); // Устанавливаем указатель на смещение
+    n = read(vdisk_fd, block, BLOCKSIZE); // Читаем блок данных
     if (n != BLOCKSIZE) {
-        printf ("read error\n");
-        return -1;
+        printf("read error\n"); // Ошибка, если не все данные были прочитаны
+        return -1; // Возвращаем -1 в случае ошибки
     }
-    return (0);
+    return 0; // Возвращаем 0 в случае успеха
 }
 
 // write block k into the virtual disk.
@@ -174,6 +192,7 @@ int sfs_mount(char *vdiskname) {
         return -1; // Ошибка: не удалось открыть файл
     }
 
+    init_open_files(); // Инициализируем таблицу открытых файлов(Фикс)
     // Успешное открытие диска
     return 0;
 }
@@ -227,24 +246,6 @@ int sfs_create(char *filename) {
     return 0; // Успешное создание файла
 }
 
-#define MAX_OPEN_FILES 10 // Максимальное количество открытых файлов
-
-typedef struct {
-    int fd; // Дескриптор файла
-    char filename[32]; // Имя файла
-    int mode; // Режим (чтение или добавление)
-    int current_size; // Текущий размер файла в байтах
-} OpenFileEntry;
-
-// Таблица открытых файлов
-static OpenFileEntry open_files[MAX_OPEN_FILES];
-
-// Инициализируем таблицу открытых файлов
-void init_open_files() {
-    for (int i = 0; i < MAX_OPEN_FILES; i++) {
-        open_files[i].fd = -1; // -1 означает, что запись свободна
-    }
-}
 
 int sfs_open(char *filename, int mode) {
     // Проверка имени файла
@@ -347,30 +348,26 @@ int sfs_read(int fd, void *buf, int n) {
             }
 
             // Определяем количество блоков, которые мы можем прочитать
-            int bytes_read = 0; // Считанные байты
-            int blocks_to_read = (n + BLOCKSIZE - 1) / BLOCKSIZE; // Количество блоков для чтения
+            int bytes_to_read = (n > file_size) ? file_size : n; // Определяем, сколько байт нужно прочитать
             int total_read = 0; // Общее количество прочитанных байтов
 
-            for (int b = 0; b < blocks_to_read; b++) {
-                char block[BLOCKSIZE]; // Буфер для загрузки блока
+            char block[BLOCKSIZE]; // Буфер для загрузки блока
+
+            for (int b = 0; b < (bytes_to_read + BLOCKSIZE - 1) / BLOCKSIZE; b++) {
 
                 // Читаем блок
                 if (read_block(block, first_block + b) == -1) {
                     return -1; // Ошибка чтения блока
                 }
-
-                // Определяем, сколько байт нужно скопировать из блока
-                int bytes_to_copy = BLOCKSIZE;
-                if (total_read + bytes_to_copy > n || total_read + bytes_to_copy > file_size) {
-                    bytes_to_copy = n - total_read; // Ограничиваем до максимального размера
-                }
+                int bytes_in_block = (b == (bytes_to_read + BLOCKSIZE - 1) / BLOCKSIZE - 1)
+                        ? bytes_to_read % BLOCKSIZE : BLOCKSIZE;
 
                 // Копируем данные в буфер
-                memcpy(buf + total_read, block, bytes_to_copy);
-                total_read += bytes_to_copy;
+                memcpy(buf + total_read, block, bytes_in_block);
+                total_read += bytes_in_block;
 
                 // Если мы достигли конца файла, выходим из цикла
-                if (total_read >= file_size) {
+                if (total_read >= bytes_to_read) {
                     break;
                 }
             }
@@ -400,7 +397,7 @@ int sfs_append(int fd, void *buf, int n) {
     // Поиск файла в каталоге
     for (int i = 0; i < NUM_DIR_ENTRIES; i++) {
         if (strcmp(directory_entries[i].filename, filename) == 0) {
-            // Нашли файл, который нужно обновить
+            // Налшии файл, который нужно обновить
             int first_block = directory_entries[i].first_block;
             int free_block = -1; // Индекс найденного свободного блока
             int total_bytes_written = 0; // Общее количество записанных байтов
