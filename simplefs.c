@@ -342,40 +342,63 @@ int sfs_read(int fd, void *buf, int n) {
         if (strcmp(directory_entries[i].filename, filename) == 0) {
             int file_size = directory_entries[i].size; // Получаем размер файла
             int first_block = directory_entries[i].first_block; // Получаем номер первого блока
-
-            if (first_block == -1) {
+            if (file_size == 0) {
                 return 0; // Файл пустой, возвращаем 0
             }
 
-            // Определяем количество блоков, которые мы можем прочитать
+            // Определяем количество байт, которые нужно прочитать
             int bytes_to_read = (n > file_size) ? file_size : n; // Определяем, сколько байт нужно прочитать
             int total_read = 0; // Общее количество прочитанных байтов
 
             char block[BLOCKSIZE]; // Буфер для загрузки блока
+            int current_block = first_block;
 
-            for (int b = 0; b < (bytes_to_read + BLOCKSIZE - 1) / BLOCKSIZE; b++) {
-
-                // Читаем блок
-                if (read_block(block, first_block + b) == -1) {
+            // Читаем последовательно блоки, связанные с файлом
+            while (total_read < bytes_to_read) {
+                // Читаем текущий блок
+                if (read_block(block, current_block) == -1) {
                     return -1; // Ошибка чтения блока
                 }
-                int bytes_in_block = (b == (bytes_to_read + BLOCKSIZE - 1) / BLOCKSIZE - 1)
-                                     ? bytes_to_read % BLOCKSIZE : BLOCKSIZE;
+
+                // Определяем сколько байтов копировать из блока
+                int bytes_in_block = (total_read + BLOCKSIZE > bytes_to_read) ?
+                                     bytes_to_read - total_read : BLOCKSIZE;
 
                 // Копируем данные в буфер
                 memcpy(buf + total_read, block, bytes_in_block);
                 total_read += bytes_in_block;
 
-                // Если мы достигли конца файла, выходим из цикла
-                if (total_read >= bytes_to_read) {
-                    break;
+                // Получаем следующий блок из FAT
+                uint64_t fat_entry;
+                if (read_block(&fat_entry, current_block) == -1) {
+                    return -1; // Ошибка чтения FAT
                 }
+                current_block = fat_entry; // Передаем указатель на следующий блок
+                if (current_block == 0) break; // Если reached end of file
             }
 
             return total_read; // Возвращаем количество успешно прочитанных байтов
         }
     }
     return -1; // Ошибка: файл не найден в каталоге
+}
+
+
+int find_free_block() {
+    // Загружаем таблицу FAT из диска в оперативную память
+    uint64_t fat[FAT_SIZE];
+    if (read_block(fat, 1 + 7) == -1) { // FAT начинается после корневого каталога
+        return -1; // Ошибка чтения FAT
+    }
+
+    // Ищем первый свободный блок
+    for (int i = 0; i < FAT_SIZE; i++) {
+        if (fat[i] == 0) { // Если FAT запись равна 0, блок свободен
+            return i + 1 + 7; // Возвращаем номер блока; +1 из-за суперблока и +7 из-за корневого каталога
+        }
+    }
+
+    return -1; // Если свободные блоки не найдены
 }
 
 
@@ -390,80 +413,57 @@ int sfs_append(int fd, void *buf, int n) {
         return -1; // Ошибка: файл не открыт
     }
 
-    // Получаем информацию о файле из таблицы открытых файлов
     char *filename = open_files[fd].filename;
-    int current_size = open_files[fd].current_size;
+    int total_bytes_written = 0; // Общее количество записанных байтов
 
     // Поиск файла в каталоге
     for (int i = 0; i < NUM_DIR_ENTRIES; i++) {
         if (strcmp(directory_entries[i].filename, filename) == 0) {
-            // Налшии файл, который нужно обновить
             int first_block = directory_entries[i].first_block;
-            int free_block = -1; // Индекс найденного свободного блока
-            int total_bytes_written = 0; // Общее количество записанных байтов
 
-            // Найти первый свободный блок
-            for (int j = 0; j < FAT_SIZE * BLOCKSIZE / 8; j++) {
-                // Проверяем FAT на наличие свободных блоков
-                uint64_t fat_entry = 0; // Используем 64-битное целочисленное значение
-                read_block(&fat_entry, j); // Читаем запись FAT
-
-                // Если записи в FAT пустые (равно 0), можем использовать этот блок
-                if (fat_entry == 0) {
-                    free_block = j; // Сохраняем индекс свободного блока
-                    break;
-                }
-            }
-
-            // Если нет свободного блока, возвращаем ошибку
-            if (free_block == -1) {
-                return -1; // Нет места для добавления данных
-            }
-
-            // Записываем данные в блок
-            char data_block[BLOCKSIZE] = {0}; // Размер блока 1 КБ
-            int bytes_to_write = n;
-            int bytes_written_in_block = 0;
-
-            // Вычисляем, сколько байт нужно записать в текущий блок
-            while (total_bytes_written < bytes_to_write) {
-                // Определяем, сколько мы можем записать
-                bytes_written_in_block = BLOCKSIZE - (current_size % BLOCKSIZE); // Оставшееся место в текущем блоке
-
-                if (bytes_to_write - total_bytes_written < bytes_written_in_block) {
-                    bytes_written_in_block = bytes_to_write - total_bytes_written;
+            // Пока есть данные для записи
+            while (total_bytes_written < n) {
+                int free_block = find_free_block();
+                if (free_block == -1) {
+                    return total_bytes_written; // Возвращаем то, что было записано
                 }
 
-                // Копируем данные из буфера в блок
-                memcpy(data_block + (current_size % BLOCKSIZE), buf + total_bytes_written, bytes_written_in_block);
-                total_bytes_written += bytes_written_in_block;
-                current_size += bytes_written_in_block;
+                // Подготовка блока данных для записи
+                char data_block[BLOCKSIZE] = {0};
+
+                // Если это первый блок, то прочитаем текущие данные
+                if (first_block != -1) {
+                    read_block(data_block, first_block);
+                }
+
+                // Скопируем данные в блок
+                int bytes_to_copy = n - total_bytes_written;
+                if (bytes_to_copy > BLOCKSIZE) bytes_to_copy = BLOCKSIZE;
+
+                memcpy(data_block + (open_files[fd].current_size % BLOCKSIZE), (char *)buf + total_bytes_written, bytes_to_copy);
 
                 // Записываем блок обратно на диск
-                write_block(data_block, first_block);
+                write_block(data_block, free_block);
 
-                // Обновляем FAT
-                // Здесь будем обновлять FAT, чтобы отслеживать, какие блоки заняты
-                uint64_t fat_value = 1; // Помечаем этот блок как занятый
-                write_block(&fat_value, free_block); // Пишем значение в FAT
+                // Обновляем размер файла
+                directory_entries[i].size += bytes_to_copy;
+                open_files[fd].current_size += bytes_to_copy;
 
-                // Если текущий файл достиг своего предела, выходим
-                if (total_bytes_written >= bytes_to_write) {
-                    break;
+                // Если это первый блок, устанавливаем first_block
+                if (first_block == -1) {
+                    directory_entries[i].first_block = free_block;
                 }
 
-                // Переходим к следующему блоку
-                first_block++;
+                // Подготовка к следующему блоку
+                total_bytes_written += bytes_to_copy;
+                first_block = free_block; // Приказы переход к новому блоку
             }
-
-            // После успешного добавления, обновляем размер файла
-            directory_entries[i].size += total_bytes_written;
             return total_bytes_written; // Возвращаем количество успешно добавленных байтов
         }
     }
-
-    return -1; // Ошибка: файл не найден в каталоге
+    return -1; // Файл не найден
 }
+
 
 
 
